@@ -1,0 +1,17 @@
+{
+  "name": "ポモドーロタイマー",
+  "short_name": "ポモドーロ",
+  "description": "25分作業と5分休憩をくり返す、シンプルなタイマー",
+  "lang": "ja",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#E7EBEF",
+  "theme_color": "#E7EBEF",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

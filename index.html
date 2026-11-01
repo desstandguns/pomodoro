@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="ja" data-phase="work">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>ポモドーロタイマー</title>
+<meta name="description" content="25分作業と5分休憩をくり返す、シンプルなタイマー">
+<meta name="theme-color" content="#E7EBEF">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/favicon-32.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="ポモドーロ">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@500;700&display=swap" rel="stylesheet">
+<style>
+  /* ===== 色の設定（作業中は青灰色、休憩中は緑灰色） ===== */
+  :root {
+    --bg: #E7EBEF;
+    --ink: #26303B;
+    --sub: #5E6B78;
+    --accent: #3D5A73;
+    --on-accent: #F5F7F9;
+    --tide: #D5DEE6;
+    --line: #C2CDD7;
+    color-scheme: light;
+    box-sizing: border-box;
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  :root[data-phase="break"] {
+    --bg: #E5ECE3;
+    --sub: #5F6E5C;
+    --accent: #55734F;
+    --tide: #D3E0D0;
+    --line: #C1D0BD;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #1C232B; --ink: #E4E9EE; --sub: #9AA7B4; --accent: #8FB0CC;
+      --on-accent: #16202A; --tide: #25303B; --line: #36434F; color-scheme: dark;
+    }
+    :root:not([data-theme="light"])[data-phase="break"] {
+      --bg: #1D2520; --sub: #9DAE99; --accent: #9DC096; --tide: #26342A; --line: #36473B;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #1C232B; --ink: #E4E9EE; --sub: #9AA7B4; --accent: #8FB0CC;
+    --on-accent: #16202A; --tide: #25303B; --line: #36434F; color-scheme: dark;
+  }
+  :root[data-theme="dark"][data-phase="break"] {
+    --bg: #1D2520; --sub: #9DAE99; --accent: #9DC096; --tide: #26342A; --line: #36473B;
+  }
+
+  /* ===== 全体のレイアウト ===== */
+  html { height: 100%; }
+  body {
+    height: 100%;
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: "Zen Maru Gothic", "Hiragino Maru Gothic ProN", "Hiragino Sans", "Noto Sans JP", sans-serif;
+    font-weight: 500;
+    -webkit-tap-highlight-color: transparent;
+    transition: background-color .6s ease;
+    overflow: hidden;
+  }
+
+  /* 経過時間に合わせて下から満ちていく背景 */
+  .tide {
+    position: fixed;
+    inset: 0;
+    background: var(--tide);
+    transform-origin: bottom;
+    transform: scaleY(0);
+    transition: transform .25s linear, background-color .6s ease;
+    pointer-events: none;
+  }
+
+  main {
+    position: relative;
+    box-sizing: border-box;
+    height: 100%;
+    max-width: 440px;
+    margin: 0 auto;
+    padding: 32px 24px 28px;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* ===== 上部：今のモード ===== */
+  .mode {
+    margin: 0;
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: var(--accent);
+    transition: color .6s ease;
+  }
+  .status {
+    margin: 6px 0 0;
+    font-size: 1rem;
+    line-height: 1.6;
+    color: var(--sub);
+    min-height: 1.6em;
+  }
+
+  /* ===== 中央：残り時間 ===== */
+  .clock {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .time {
+    font-size: min(30vw, 9.5rem);
+    font-weight: 500;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.02em;
+    line-height: 1;
+  }
+
+  /* ===== ボタン ===== */
+  .controls {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  button {
+    font: inherit;
+    border: none;
+    cursor: pointer;
+    border-radius: 999px;
+    touch-action: manipulation;
+    transition: transform .1s ease, background-color .6s ease, color .6s ease;
+  }
+  button:active { transform: scale(.98); }
+  button:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
+  .primary {
+    height: 76px;
+    font-size: 1.5rem;
+    font-weight: 700;
+    background: var(--accent);
+    color: var(--on-accent);
+  }
+  .secondary {
+    height: 56px;
+    font-size: 1.125rem;
+    background: transparent;
+    color: var(--ink);
+    box-shadow: inset 0 0 0 1.5px var(--line);
+  }
+
+  /* ===== 下部：今日の回数 ===== */
+  .today {
+    margin: 24px 0 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    font-size: 1.0625rem;
+    color: var(--sub);
+  }
+  .dots { display: flex; flex-wrap: wrap; gap: 6px; flex: 1; justify-content: flex-end; }
+  .dots span {
+    width: 10px; height: 10px; border-radius: 50%;
+    background: var(--accent);
+    transition: background-color .6s ease;
+  }
+  .count { color: var(--ink); font-weight: 700; white-space: nowrap; }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, .tide { transition: none !important; }
+    button:active { transform: none; }
+  }
+</style>
+</head>
+<body>
+  <div class="tide" id="tide" aria-hidden="true"></div>
+
+  <main>
+    <header>
+      <p class="mode" id="mode" aria-live="polite">作業</p>
+      <p class="status" id="status">スタートを押すと25分の作業が始まります</p>
+    </header>
+
+    <div class="clock">
+      <div class="time" id="time" role="timer" aria-label="残り時間">25:00</div>
+    </div>
+
+    <div class="controls">
+      <button class="primary" id="startBtn" type="button">スタート</button>
+      <button class="secondary" id="resetBtn" type="button">リセット</button>
+    </div>
+
+    <p class="today">
+      <span>今日の完了</span>
+      <span class="dots" id="dots" aria-hidden="true"></span>
+      <span class="count" id="count">0回</span>
+    </p>
+  </main>
+
+<script>
+  // ===== 設定 =====
+  const WORK = 25 * 60 * 1000;   // 作業時間（ミリ秒）
+  const BREAK = 5 * 60 * 1000;   // 休憩時間（ミリ秒）
+  const STORAGE_KEY = 'pomodoro-today';
+
+  // ===== 状態 =====
+  let phase = 'work';        // 'work' か 'break'
+  let remaining = WORK;      // 一時停止中の残り時間
+  let endTime = null;        // 動いているときの「終わる時刻」
+  let timerId = null;
+  let count = 0;
+
+  const $ = (id) => document.getElementById(id);
+  const duration = (p) => (p === 'work' ? WORK : BREAK);
+
+  function format(ms) {
+    const total = Math.ceil(ms / 1000);
+    const m = Math.floor(total / 60);
+    const s = total % 60;
+    return String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
+  }
+
+  // ===== 今日の回数（スマホに保存） =====
+  function todayKey() {
+    const d = new Date();
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  }
+  function loadCount() {
+    try {
+      const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null');
+      if (saved && saved.date === todayKey()) return saved.count;
+    } catch (e) {}
+    return 0;
+  }
+  function saveCount(n) {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ date: todayKey(), count: n }));
+    } catch (e) {}
+  }
+  function addCount() {
+    count = loadCount() + 1;   // 日付が変わっていたら0から数え直す
+    saveCount(count);
+    renderCount();
+  }
+  function renderCount() {
+    $('count').textContent = count + '回';
+    const dots = $('dots');
+    dots.innerHTML = '';
+    for (let i = 0; i < Math.min(count, 12); i++) {
+      dots.appendChild(document.createElement('span'));
+    }
+  }
+
+  // ===== 音（ファイルを使わず、その場で鳴らす） =====
+  let audioCtx = null;
+  function prepareAudio() {
+    try {
+      if (!audioCtx) {
+        const AC = window.AudioContext || window.webkitAudioContext;
+        if (!AC) return;
+        audioCtx = new AC();
+      }
+      if (audioCtx.state === 'suspended') audioCtx.resume();
+      // iPhoneで音を使えるようにするための無音再生
+      const buf = audioCtx.createBuffer(1, 1, 22050);
+      const src = audioCtx.createBufferSource();
+      src.buffer = buf;
+      src.connect(audioCtx.destination);
+      src.start(0);
+    } catch (e) {}
+  }
+  function chime() {
+    if (!audioCtx) return;
+    try {
+      if (audioCtx.state === 'suspended') audioCtx.resume();
+      // 作業が終わったら上がる音、休憩が終わったら下がる音
+      const notes = phase === 'break' ? [659.25, 783.99, 1046.5] : [1046.5, 783.99, 659.25];
+      const t0 = audioCtx.currentTime + 0.05;
+      notes.forEach((freq, i) => {
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = 'sine';
+        osc.frequency.value = freq;
+        const t = t0 + i * 0.35;
+        gain.gain.setValueAtTime(0.0001, t);
+        gain.gain.exponentialRampToValueAtTime(0.3, t + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.0001, t + 1.4);
+        osc.connect(gain).connect(audioCtx.destination);
+        osc.start(t);
+        osc.stop(t + 1.5);
+      });
+    } catch (e) {}
+  }
+
+  // ===== バイブ（Androidのみ。iPhoneは非対応） =====
+  function vibrate() {
+    try {
+      if (navigator.vibrate) navigator.vibrate([300, 150, 300, 150, 300]);
+    } catch (e) {}
+  }
+
+  // ===== 画面が自動で消えないようにする =====
+  let wakeLock = null;
+  async function keepScreenOn() {
+    try {
+      if ('wakeLock' in navigator && !wakeLock) {
+        wakeLock = await navigator.wakeLock.request('screen');
+        wakeLock.addEventListener('release', () => { wakeLock = null; });
+      }
+    } catch (e) { wakeLock = null; }
+  }
+  function allowScreenOff() {
+    if (wakeLock) {
+      wakeLock.release().catch(() => {});
+      wakeLock = null;
+    }
+  }
+
+  // ===== 画面の更新 =====
+  function timeLeft() {
+    return endTime ? Math.max(0, endTime - Date.now()) : remaining;
+  }
+  function render() {
+    const left = timeLeft();
+    $('time').textContent = format(left);
+    document.title = (endTime ? format(left) + ' ' : '') + 'ポモドーロタイマー';
+    const progress = 1 - left / duration(phase);
+    $('tide').style.transform = 'scaleY(' + progress + ')';
+  }
+  function update() {
+    document.documentElement.dataset.phase = phase;
+    $('mode').textContent = phase === 'work' ? '作業' : '休憩';
+
+    const running = endTime !== null;
+    const untouched = remaining === duration(phase);
+    const btn = $('startBtn');
+    if (running) btn.textContent = '一時停止';
+    else btn.textContent = untouched ? 'スタート' : '再開';
+
+    let status;
+    if (running) status = phase === 'work' ? '終わったら5分休憩です' : '終わったら次の作業が始まります';
+    else if (!untouched) status = '一時停止中';
+    else status = phase === 'work' ? 'スタートを押すと25分の作業が始まります' : 'スタートを押すと5分の休憩が始まります';
+    $('status').textContent = status;
+
+    render();
+    updateBarColor();
+  }
+
+  // スマホ上部のバーの色を、今の背景色に合わせる
+  function updateBarColor() {
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (!meta) return;
+    requestAnimationFrame(() => {
+      const bg = getComputedStyle(document.documentElement).getPropertyValue('--bg').trim();
+      if (bg) meta.setAttribute('content', bg);
+    });
+  }
+
+  // ===== タイマーの動き =====
+  function tick() {
+    if (!endTime) return;
+    let switched = false;
+    // 時間を過ぎていたら次のモードへ（ほかのアプリから戻ったときも正しく進む）
+    while (Date.now() >= endTime) {
+      if (phase === 'work') addCount();
+      phase = phase === 'work' ? 'break' : 'work';
+      endTime += duration(phase);
+      switched = true;
+    }
+    if (switched) {
+      chime();
+      vibrate();
+      update();
+    } else {
+      render();
+    }
+  }
+  function start() {
+    prepareAudio();
+    endTime = Date.now() + remaining;
+    clearInterval(timerId);
+    timerId = setInterval(tick, 250);
+    keepScreenOn();
+    update();
+  }
+  function pause() {
+    remaining = timeLeft();
+    endTime = null;
+    clearInterval(timerId);
+    allowScreenOff();
+    update();
+  }
+  function reset() {
+    clearInterval(timerId);
+    endTime = null;
+    allowScreenOff();
+    phase = 'work';
+    remaining = WORK;
+    update();
+  }
+
+  $('startBtn').addEventListener('click', () => (endTime ? pause() : start()));
+  $('resetBtn').addEventListener('click', reset);
+
+  // 別のアプリから戻ってきたとき
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+      count = loadCount();
+      renderCount();
+      tick();
+      if (endTime) keepScreenOn();
+    }
+  });
+
+  // ===== 起動時 =====
+  count = loadCount();
+  renderCount();
+  update();
+
+  // ダークモードの切り替えに合わせてバーの色も変える
+  try {
+    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', updateBarColor);
+  } catch (e) {}
+
+  // ===== アプリとして使えるようにする（サービスワーカーの登録） =====
+  if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('sw.js').catch(() => {});
+    });
+  }
+</script>
+</body>
+</html>
