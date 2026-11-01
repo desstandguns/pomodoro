@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>ポモドーロタイマー</title>
-<meta name="description" content="25分作業と5分休憩をくり返す、シンプルなタイマー">
+<meta name="description" content="25分・45分・60分の作業と休憩をくり返す、シンプルなタイマー">
 <meta name="theme-color" content="#E7EBEF">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icons/favicon-32.png" sizes="32x32" type="image/png">
@@ -171,6 +171,28 @@
   }
   .count { color: var(--ink); font-weight: 700; white-space: nowrap; }
 
+  /* ===== 作業時間の切り替え（25分・45分・60分） ===== */
+  .lengths {
+    margin: 20px 0 0;
+    display: flex;
+    gap: 8px;
+  }
+  .lengths button {
+    flex: 1;
+    height: 44px;
+    font-size: 1rem;
+    background: transparent;
+    color: var(--sub);
+    box-shadow: inset 0 0 0 1.5px var(--line);
+  }
+  .lengths button[aria-pressed="true"] {
+    color: var(--accent);
+    font-weight: 700;
+    box-shadow: inset 0 0 0 2px var(--accent);
+  }
+  .lengths button:disabled { opacity: .45; cursor: default; }
+  .lengths button:disabled:active { transform: none; }
+
   @media (prefers-reduced-motion: reduce) {
     *, .tide { transition: none !important; }
     button:active { transform: none; }
@@ -184,6 +206,11 @@
     <header>
       <p class="mode" id="mode" aria-live="polite">作業</p>
       <p class="status" id="status">スタートを押すと25分の作業が始まります</p>
+      <div class="lengths" id="lengths" role="group" aria-label="作業時間">
+        <button type="button" data-min="25" aria-pressed="true">25分</button>
+        <button type="button" data-min="45" aria-pressed="false">45分</button>
+        <button type="button" data-min="60" aria-pressed="false">60分</button>
+      </div>
     </header>
 
     <div class="clock">
@@ -204,9 +231,20 @@
 
 <script>
   // ===== 設定 =====
-  const WORK = 25 * 60 * 1000;   // 作業時間（ミリ秒）
-  const BREAK = 5 * 60 * 1000;   // 休憩時間（ミリ秒）
+  // 作業時間（分）と、そのあとの休憩時間（分）の組み合わせ
+  const LENGTHS = { 25: 5, 45: 10, 60: 15 };
   const STORAGE_KEY = 'pomodoro-today';
+  const LENGTH_KEY = 'pomodoro-length';
+
+  // 前に選んだ作業時間を思い出す（なければ25分）
+  let workMin = 25;
+  try {
+    const savedMin = Number(localStorage.getItem(LENGTH_KEY));
+    if (LENGTHS[savedMin]) workMin = savedMin;
+  } catch (e) {}
+  let breakMin = LENGTHS[workMin];
+  let WORK = workMin * 60 * 1000;     // 作業時間（ミリ秒）
+  let BREAK = breakMin * 60 * 1000;   // 休憩時間（ミリ秒）
 
   // ===== 状態 =====
   let phase = 'work';        // 'work' か 'break'
@@ -343,10 +381,16 @@
     else btn.textContent = untouched ? 'スタート' : '再開';
 
     let status;
-    if (running) status = phase === 'work' ? '終わったら5分休憩です' : '終わったら次の作業が始まります';
+    if (running) status = phase === 'work' ? '終わったら' + breakMin + '分休憩です' : '終わったら次の作業が始まります';
     else if (!untouched) status = '一時停止中';
-    else status = phase === 'work' ? 'スタートを押すと25分の作業が始まります' : 'スタートを押すと5分の休憩が始まります';
+    else status = phase === 'work' ? 'スタートを押すと' + workMin + '分の作業が始まります' : 'スタートを押すと' + breakMin + '分の休憩が始まります';
     $('status').textContent = status;
+
+    // 作業時間のボタン：選んでいるものを目立たせ、動いている間は押せないようにする
+    document.querySelectorAll('#lengths button').forEach((b) => {
+      b.setAttribute('aria-pressed', Number(b.dataset.min) === workMin ? 'true' : 'false');
+      b.disabled = running;
+    });
 
     render();
     updateBarColor();
@@ -407,6 +451,20 @@
 
   $('startBtn').addEventListener('click', () => (endTime ? pause() : start()));
   $('resetBtn').addEventListener('click', reset);
+
+  // 作業時間を選んだとき：新しい長さで作業の最初からにする
+  function chooseLength(min) {
+    if (endTime || !LENGTHS[min]) return;
+    workMin = min;
+    breakMin = LENGTHS[min];
+    WORK = workMin * 60 * 1000;
+    BREAK = breakMin * 60 * 1000;
+    try { localStorage.setItem(LENGTH_KEY, String(min)); } catch (e) {}
+    reset();
+  }
+  document.querySelectorAll('#lengths button').forEach((b) => {
+    b.addEventListener('click', () => chooseLength(Number(b.dataset.min)));
+  });
 
   // 別のアプリから戻ってきたとき
   document.addEventListener('visibilitychange', () => {
