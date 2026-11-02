@@ -89,9 +89,23 @@
     padding: 32px 24px 28px;
     display: flex;
     flex-direction: column;
+    overflow-y: auto;   /* 記録を開いて入りきらないときだけスクロール */
   }
 
   /* ===== 上部：今のモード ===== */
+  .top {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  /* 4回のうち何回目か（4回目のあとは長い休憩） */
+  .cycle {
+    font-size: 1rem;
+    color: var(--sub);
+    font-variant-numeric: tabular-nums;
+    transition: color .6s ease;
+  }
   .mode {
     margin: 0;
     font-size: 1.5rem;
@@ -193,9 +207,94 @@
   .lengths button:disabled { opacity: .45; cursor: default; }
   .lengths button:disabled:active { transform: none; }
 
+  /* ===== 小さなボタン（音を試す・通知） ===== */
+  .extras {
+    margin: 14px 0 0;
+    display: flex;
+    justify-content: center;
+    gap: 8px;
+  }
+  .small {
+    flex: 0 1 11rem;
+    height: 40px;
+    font-size: .9375rem;
+    background: transparent;
+    color: var(--sub);
+    box-shadow: inset 0 0 0 1.5px var(--line);
+  }
+  .small[aria-pressed="true"] {
+    color: var(--accent);
+    box-shadow: inset 0 0 0 1.5px var(--accent);
+  }
+  [hidden] { display: none !important; }
+
+  /* ===== 記録（7日分の棒グラフ） ===== */
+  .history {
+    margin: 8px 0 0;
+    color: var(--sub);
+    font-size: .9375rem;
+  }
+  .history summary {
+    list-style: none;
+    cursor: pointer;
+    text-align: center;
+    padding: 8px 0;
+    border-radius: 999px;
+  }
+  .history summary::-webkit-details-marker { display: none; }
+  .history summary::after {
+    content: "▾";
+    display: inline-block;
+    margin-left: .35em;
+    transform: rotate(-90deg);
+    transition: transform .2s ease;
+  }
+  .history[open] summary::after { transform: none; }
+  .history summary:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+  .bars {
+    display: flex;
+    align-items: flex-end;
+    gap: 6px;
+    padding: 4px 4px 0;
+  }
+  .day {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    font-size: .8125rem;
+  }
+  .day .n { color: var(--ink); font-variant-numeric: tabular-nums; }
+  .day .bar {
+    width: 100%;
+    max-width: 26px;
+    height: calc(4px + var(--h, 0) * 52px);   /* 回数に合わせた高さ */
+    border-radius: 6px;
+    background: var(--line);
+    transition: background-color .6s ease;
+  }
+  .day.today .bar { background: var(--accent); }
+  .day.today .w { color: var(--accent); font-weight: 700; }
+  .week { margin: 10px 0 2px; text-align: center; }
+  .week strong { color: var(--ink); }
+
+  /* ===== 小さい画面（高さが低いスマホ）用に少し詰める ===== */
+  @media (max-height: 700px) {
+    main { padding: 20px 20px 14px; }
+    .lengths { margin-top: 12px; }
+    .controls { gap: 10px; }
+    .primary { height: 64px; }
+    .secondary { height: 48px; }
+    .today { margin-top: 14px; }
+    .extras { margin-top: 10px; }
+    .history { margin-top: 4px; }
+  }
+
   @media (prefers-reduced-motion: reduce) {
     *, .tide { transition: none !important; }
     button:active { transform: none; }
+    .history summary::after { transition: none; }
   }
 </style>
 </head>
@@ -204,7 +303,10 @@
 
   <main>
     <header>
-      <p class="mode" id="mode" aria-live="polite">作業</p>
+      <div class="top">
+        <p class="mode" id="mode" aria-live="polite">作業</p>
+        <span class="cycle" id="cycle" title="4回ごとに長い休憩" aria-label="4回中1回目">1/4</span>
+      </div>
       <p class="status" id="status">スタートを押すと25分の作業が始まります</p>
       <div class="lengths" id="lengths" role="group" aria-label="作業時間">
         <button type="button" data-min="25" aria-pressed="true">25分</button>
@@ -227,14 +329,33 @@
       <span class="dots" id="dots" aria-hidden="true"></span>
       <span class="count" id="count">0回</span>
     </p>
+
+    <div class="extras">
+      <button class="small" id="testSoundBtn" type="button">音を試す</button>
+      <button class="small" id="notifyBtn" type="button" aria-pressed="false" hidden>通知：オフ</button>
+    </div>
+
+    <details class="history" id="historyPanel">
+      <summary>記録</summary>
+      <div class="bars" id="historyBars"></div>
+      <p class="week">この7日間の集中 <strong id="weekMinutes">0分</strong></p>
+    </details>
   </main>
 
+<!-- 通知の仕組み（なくても動くようにしてある） -->
+<script src="push.js"></script>
 <script>
   // ===== 設定 =====
   // 作業時間（分）と、そのあとの休憩時間（分）の組み合わせ
   const LENGTHS = { 25: 5, 45: 10, 60: 15 };
+  // 4回目の作業のあとの「長い休憩」（分）
+  const LONG_BREAKS = { 25: 15, 45: 20, 60: 30 };
+  const CYCLE = 4;   // 何回ごとに長い休憩にするか
   const STORAGE_KEY = 'pomodoro-today';
   const LENGTH_KEY = 'pomodoro-length';
+  const HISTORY_KEY = 'pomodoro-history';   // 日ごとの完了回数 {"2026-11-02": 3}
+  const MINUTES_KEY = 'pomodoro-minutes';   // 日ごとの作業した分数 {"2026-11-02": 75}
+  const KEEP_DAYS = 30;                     // 記録を残す日数
 
   // 前に選んだ作業時間を思い出す（なければ25分）
   let workMin = 25;
@@ -243,8 +364,8 @@
     if (LENGTHS[savedMin]) workMin = savedMin;
   } catch (e) {}
   let breakMin = LENGTHS[workMin];
+  let longBreakMin = LONG_BREAKS[workMin];
   let WORK = workMin * 60 * 1000;     // 作業時間（ミリ秒）
-  let BREAK = breakMin * 60 * 1000;   // 休憩時間（ミリ秒）
 
   // ===== 状態 =====
   let phase = 'work';        // 'work' か 'break'
@@ -252,9 +373,19 @@
   let endTime = null;        // 動いているときの「終わる時刻」
   let timerId = null;
   let count = 0;
+  let done = 0;              // リセットしてから終わった作業の回数（4回ごとに長い休憩）
 
   const $ = (id) => document.getElementById(id);
-  const duration = (p) => (p === 'work' ? WORK : BREAK);
+
+  // 今の休憩（作業中なら次の休憩）が長い休憩かどうか
+  function isLongBreak() {
+    if (phase === 'work') return (done + 1) % CYCLE === 0;
+    return done > 0 && done % CYCLE === 0;
+  }
+  function breakMinutes() {
+    return isLongBreak() ? longBreakMin : breakMin;
+  }
+  const duration = (p) => (p === 'work' ? WORK : breakMinutes() * 60 * 1000);
 
   function format(ms) {
     const total = Math.ceil(ms / 1000);
@@ -264,9 +395,11 @@
   }
 
   // ===== 今日の回数（スマホに保存） =====
-  function todayKey() {
-    const d = new Date();
+  function dateKey(d) {
     return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  }
+  function todayKey() {
+    return dateKey(new Date());
   }
   function loadCount() {
     try {
@@ -283,7 +416,9 @@
   function addCount() {
     count = loadCount() + 1;   // 日付が変わっていたら0から数え直す
     saveCount(count);
+    addHistory();
     renderCount();
+    renderHistory();
   }
   function renderCount() {
     $('count').textContent = count + '回';
@@ -292,6 +427,72 @@
     for (let i = 0; i < Math.min(count, 12); i++) {
       dots.appendChild(document.createElement('span'));
     }
+    updateBadge();
+  }
+
+  // ホーム画面のアイコンに今日の回数を出す（対応している機種だけ）
+  function updateBadge() {
+    try {
+      if (!('setAppBadge' in navigator)) return;
+      const p = count > 0 ? navigator.setAppBadge(count) : navigator.clearAppBadge();
+      if (p && p.catch) p.catch(() => {});
+    } catch (e) {}
+  }
+
+  // ===== 7日間の記録 =====
+  function loadMap(key) {
+    try {
+      const m = JSON.parse(localStorage.getItem(key) || '{}');
+      if (m && typeof m === 'object' && !Array.isArray(m)) return m;
+    } catch (e) {}
+    return {};
+  }
+  function saveMap(key, m) {
+    // 30日より前の記録は消す（日付の文字列はそのまま大小をくらべられる）
+    const limit = new Date();
+    limit.setDate(limit.getDate() - KEEP_DAYS);
+    const oldest = dateKey(limit);
+    Object.keys(m).forEach((k) => { if (k < oldest) delete m[k]; });
+    try { localStorage.setItem(key, JSON.stringify(m)); } catch (e) {}
+  }
+  function addHistory() {
+    const today = todayKey();
+    const history = loadMap(HISTORY_KEY);
+    history[today] = count;
+    saveMap(HISTORY_KEY, history);
+    const minutes = loadMap(MINUTES_KEY);
+    // 記録を始める前の回数は、今の長さで数えておく
+    if (typeof minutes[today] !== 'number') minutes[today] = (count - 1) * workMin;
+    minutes[today] += workMin;
+    saveMap(MINUTES_KEY, minutes);
+  }
+  function renderHistory() {
+    const history = loadMap(HISTORY_KEY);
+    const minutes = loadMap(MINUTES_KEY);
+    const days = [];
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date();
+      d.setDate(d.getDate() - i);
+      const key = dateKey(d);
+      const n = Number(history[key]) || 0;
+      const min = typeof minutes[key] === 'number' ? minutes[key] : n * 25;
+      days.push({ d, n, min, today: i === 0 });
+    }
+    const max = Math.max(1, ...days.map((x) => x.n));
+    const bars = $('historyBars');
+    bars.innerHTML = '';
+    let total = 0;
+    days.forEach((x) => {
+      total += x.min;
+      const col = document.createElement('div');
+      col.className = 'day' + (x.today ? ' today' : '');
+      col.style.setProperty('--h', x.n / max);
+      const label = '日月火水木金土'[x.d.getDay()];
+      col.setAttribute('aria-label', (x.today ? '今日' : label + '曜日') + ' ' + x.n + '回');
+      col.innerHTML = '<span class="n">' + x.n + '</span><span class="bar"></span><span class="w">' + label + '</span>';
+      bars.appendChild(col);
+    });
+    $('weekMinutes').textContent = total + '分';
   }
 
   // ===== 音（ファイルを使わず、その場で鳴らす） =====
@@ -312,12 +513,12 @@
       src.start(0);
     } catch (e) {}
   }
-  function chime() {
+  // workEnded が true なら作業終わりの音（上がる3音）、false なら休憩終わりの音（下がる3音）
+  function chime(workEnded) {
     if (!audioCtx) return;
     try {
       if (audioCtx.state === 'suspended') audioCtx.resume();
-      // 作業が終わったら上がる音、休憩が終わったら下がる音
-      const notes = phase === 'break' ? [659.25, 783.99, 1046.5] : [1046.5, 783.99, 659.25];
+      const notes = workEnded ? [659.25, 783.99, 1046.5] : [1046.5, 783.99, 659.25];
       const t0 = audioCtx.currentTime + 0.05;
       notes.forEach((freq, i) => {
         const osc = audioCtx.createOscillator();
@@ -340,6 +541,81 @@
     try {
       if (navigator.vibrate) navigator.vibrate([300, 150, 300, 150, 300]);
     } catch (e) {}
+  }
+
+  // ===== 通知（push.js があるときだけ使う） =====
+  function push() {
+    return window.PomodoroPush || null;
+  }
+  // 失敗しても画面にエラーを出さないようにする
+  function quiet(p) {
+    if (p && typeof p.then === 'function') p.then(null, () => {});
+  }
+  // 今のモードが終わる時刻に通知を予約する
+  function schedulePush() {
+    const P = push();
+    if (!P || !endTime) return;
+    let title, body;
+    if (phase === 'work') {
+      title = '作業おわり';
+      body = isLongBreak() ? longBreakMin + '分の長い休憩です' : breakMin + '分休憩しましょう';
+    } else {
+      title = '休憩おわり';
+      body = '次の作業を始めましょう';
+    }
+    try { quiet(P.schedule({ at: endTime, title: title, body: body })); } catch (e) {}
+  }
+  function cancelPush() {
+    const P = push();
+    if (!P) return;
+    try { quiet(P.cancel()); } catch (e) {}
+  }
+
+  let notifyOn = false;
+  // 通知ボタンの表示を今の状態に合わせる
+  async function refreshNotify() {
+    const btn = $('notifyBtn');
+    const P = push();
+    let supported = false;
+    let needsHome = false;
+    try {
+      if (P) {
+        supported = !!P.isSupported();
+        needsHome = !!P.needsHomeScreen();
+      }
+    } catch (e) {}
+    if (!P || (!supported && !needsHome)) {
+      btn.hidden = true;
+      return;
+    }
+    btn.hidden = false;
+    notifyOn = false;
+    if (!needsHome) {
+      try { notifyOn = !!(await P.isEnabled()); } catch (e) {}
+    }
+    btn.textContent = notifyOn ? '通知：オン' : '通知：オフ';
+    btn.setAttribute('aria-pressed', notifyOn ? 'true' : 'false');
+  }
+  async function toggleNotify() {
+    const P = push();
+    if (!P) return;
+    try {
+      if (P.needsHomeScreen()) {
+        $('status').textContent = '通知はホーム画面に追加したアプリで使えます';
+        return;
+      }
+      // enable() は押した直後に呼ぶ（許可の画面を出すため）
+      if (notifyOn) await P.disable();
+      else await P.enable();
+    } catch (e) {}
+    await refreshNotify();
+    let perm = null;
+    try { perm = await P.permission(); } catch (e) {}
+    if (perm === 'denied') {
+      $('status').textContent = '通知がブロックされています。ブラウザの設定で許可してください';
+    } else if (notifyOn && endTime) {
+      schedulePush();
+    }
   }
 
   // ===== 画面が自動で消えないようにする =====
@@ -372,7 +648,13 @@
   }
   function update() {
     document.documentElement.dataset.phase = phase;
-    $('mode').textContent = phase === 'work' ? '作業' : '休憩';
+    const long = isLongBreak();
+    $('mode').textContent = phase === 'work' ? '作業' : (long ? '長い休憩' : '休憩');
+
+    // 4回のうち何回目か（休憩中は、いま終えた回）
+    const n = phase === 'work' ? (done % CYCLE) + 1 : ((done - 1) % CYCLE) + 1;
+    $('cycle').textContent = n + '/' + CYCLE;
+    $('cycle').setAttribute('aria-label', CYCLE + '回中' + n + '回目');
 
     const running = endTime !== null;
     const untouched = remaining === duration(phase);
@@ -381,9 +663,12 @@
     else btn.textContent = untouched ? 'スタート' : '再開';
 
     let status;
-    if (running) status = phase === 'work' ? '終わったら' + breakMin + '分休憩です' : '終わったら次の作業が始まります';
-    else if (!untouched) status = '一時停止中';
-    else status = phase === 'work' ? 'スタートを押すと' + workMin + '分の作業が始まります' : 'スタートを押すと' + breakMin + '分の休憩が始まります';
+    if (running) {
+      if (phase === 'work') status = long ? '終わったら' + longBreakMin + '分の長い休憩です' : '終わったら' + breakMin + '分休憩です';
+      else status = '終わったら次の作業が始まります';
+    } else if (!untouched) status = '一時停止中';
+    else if (phase === 'work') status = 'スタートを押すと' + workMin + '分の作業が始まります';
+    else status = long ? 'スタートを押すと' + longBreakMin + '分の長い休憩が始まります' : 'スタートを押すと' + breakMin + '分の休憩が始まります';
     $('status').textContent = status;
 
     // 作業時間のボタン：選んでいるものを目立たせ、動いている間は押せないようにする
@@ -411,16 +696,21 @@
     if (!endTime) return;
     let switched = false;
     // 時間を過ぎていたら次のモードへ（ほかのアプリから戻ったときも正しく進む）
+    // 回数を先に数えるので、4回目のあとは長い休憩の長さで進む
     while (Date.now() >= endTime) {
-      if (phase === 'work') addCount();
+      if (phase === 'work') {
+        addCount();
+        done++;
+      }
       phase = phase === 'work' ? 'break' : 'work';
       endTime += duration(phase);
       switched = true;
     }
     if (switched) {
-      chime();
+      chime(phase === 'break');
       vibrate();
       update();
+      schedulePush();
     } else {
       render();
     }
@@ -432,19 +722,23 @@
     timerId = setInterval(tick, 250);
     keepScreenOn();
     update();
+    schedulePush();
   }
   function pause() {
     remaining = timeLeft();
     endTime = null;
     clearInterval(timerId);
     allowScreenOff();
+    cancelPush();
     update();
   }
   function reset() {
     clearInterval(timerId);
     endTime = null;
     allowScreenOff();
+    cancelPush();
     phase = 'work';
+    done = 0;
     remaining = WORK;
     update();
   }
@@ -452,13 +746,31 @@
   $('startBtn').addEventListener('click', () => (endTime ? pause() : start()));
   $('resetBtn').addEventListener('click', reset);
 
+  // 音を試す：タイマーはそのままで、作業終わりの音とバイブだけ鳴らす
+  $('testSoundBtn').addEventListener('click', () => {
+    prepareAudio();
+    chime(true);
+    vibrate();
+  });
+
+  $('notifyBtn').addEventListener('click', toggleNotify);
+
+  // キーボードのスペースでスタート／一時停止（ボタンを選んでいるときは除く）
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== ' ' && e.code !== 'Space') return;
+    if (e.repeat || (e.target.closest && e.target.closest('button, summary, a, input, textarea, select'))) return;
+    e.preventDefault();
+    if (endTime) pause();
+    else start();
+  });
+
   // 作業時間を選んだとき：新しい長さで作業の最初からにする
   function chooseLength(min) {
     if (endTime || !LENGTHS[min]) return;
     workMin = min;
     breakMin = LENGTHS[min];
+    longBreakMin = LONG_BREAKS[min];
     WORK = workMin * 60 * 1000;
-    BREAK = breakMin * 60 * 1000;
     try { localStorage.setItem(LENGTH_KEY, String(min)); } catch (e) {}
     reset();
   }
@@ -466,11 +778,20 @@
     b.addEventListener('click', () => chooseLength(Number(b.dataset.min)));
   });
 
+  // 記録を開いたら、見えるところまでスクロールする
+  $('historyPanel').addEventListener('toggle', () => {
+    if (!$('historyPanel').open) return;
+    renderHistory();
+    const calm = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    $('historyPanel').scrollIntoView({ block: 'nearest', behavior: calm ? 'auto' : 'smooth' });
+  });
+
   // 別のアプリから戻ってきたとき
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') {
       count = loadCount();
       renderCount();
+      renderHistory();
       tick();
       if (endTime) keepScreenOn();
     }
@@ -479,7 +800,10 @@
   // ===== 起動時 =====
   count = loadCount();
   renderCount();
+  renderHistory();
   update();
+  // ページの準備ができてから通知ボタンを整える（push.js がなければ隠したまま）
+  document.addEventListener('DOMContentLoaded', refreshNotify);
 
   // ダークモードの切り替えに合わせてバーの色も変える
   try {
