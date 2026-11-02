@@ -130,7 +130,7 @@ test('ほかのアプリに切り替えて2時間たってから戻っても、�
       document.dispatchEvent(new Event('visibilitychange'));
     });
 
-    // 2時間1分 一気に進める（25+5分 を4回 → 作業中・残り24:00 のはず）
+    // 2時間1分 一気に進める（25+5分 を3回、25分、そのあと4回目なので15分の長い休憩 → 長い休憩・残り9:00 のはず）
     await page.clock.fastForward(2 * 60 * MIN + MIN);
 
     await page.evaluate(() => {
@@ -139,10 +139,10 @@ test('ほかのアプリに切り替えて2時間たってから戻っても、�
     });
     await page.clock.runFor(500);
 
-    assert.equal(await text(page, '#mode'), '作業');
+    assert.equal(await text(page, '#mode'), '長い休憩');
     assert.equal(await text(page, '#count'), '4回');
     const left = toSeconds(await text(page, '#time'));
-    assert.ok(left <= 24 * 60 && left >= 24 * 60 - 2, `残り時間が 24:00 前後のはず: ${left}秒`);
+    assert.ok(left <= 9 * 60 && left >= 9 * 60 - 2, `残り時間が 9:00 前後のはず: ${left}秒`);
     assert.equal(await text(page, '#startBtn'), '一時停止');
     assert.deepEqual(errors, []);
   } finally {
