@@ -17,9 +17,9 @@
   // ここには書かず、npx wrangler secret put で登録します
   "vars": {
     // アプリのサイト（https://ユーザー名.github.io）。最後に / を付けない。カンマ区切りで複数可
-    "ALLOWED_ORIGIN": "https://tkjm22y24-droid.github.io",
+    "ALLOWED_ORIGIN": "https://desstandguns.github.io",
     // 送り主の連絡先。https の URL か mailto:メールアドレス
-    "VAPID_SUBJECT": "https://tkjm22y24-droid.github.io/pomodoro/"
+    "VAPID_SUBJECT": "https://desstandguns.github.io/pomodoro/"
   },
 
   "observability": { "enabled": true }

@@ -54,8 +54,8 @@ Claude Code はこのファイルと `index.html` を読んでから作業を始
 
 ## PWA化（ホーム画面に置けるアプリ）
 GitHub Pages で公開する。
-- 保管場所（リポジトリ）：https://github.com/tkjm22y24-droid/pomodoro （`main` ブランチの一番上の階層をそのまま公開）
-- 公開アドレス：https://tkjm22y24-droid.github.io/pomodoro/
+- 保管場所（リポジトリ）：https://github.com/desstandguns/pomodoro （`main` ブランチの一番上の階層をそのまま公開）
+- 公開アドレス：https://desstandguns.github.io/pomodoro/
 - `main` に保存すると、数分で公開ページも新しくなる
 
 ```

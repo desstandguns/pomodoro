@@ -168,7 +168,7 @@ const PUSH_SERVER_URL = 'https://pomodoro-push.あなたの名前.workers.dev';
 `ALLOWED_ORIGIN` は「このサーバーを使ってよいサイト」です。今はこうなっています。
 
 ```jsonc
-"ALLOWED_ORIGIN": "https://tkjm22y24-droid.github.io",
+"ALLOWED_ORIGIN": "https://desstandguns.github.io",
 ```
 
 - ユーザー名が変わったら、`https://新しいユーザー名.github.io` に書き換えます。
