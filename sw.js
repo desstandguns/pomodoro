@@ -1,11 +1,12 @@
 // サービスワーカー：アプリのファイルをスマホの中に保存し、ネットなしでも開けるようにする係
 // ファイルを直したら、下の数字を1つ上げると、スマホ側も新しい版に入れ替わります
-const CACHE = 'pomodoro-v2';
+const CACHE = 'pomodoro-v3';
 
 const APP_FILES = [
   './',
   './index.html',
   './manifest.webmanifest',
+  './push.js',
   './icons/icon-192.png',
   './icons/icon-512.png',
   './icons/apple-touch-icon.png',
@@ -66,4 +67,45 @@ self.addEventListener('fetch', (event) => {
 
   // 画像などそのほか：保存分を先に使う
   event.respondWith(caches.match(req).then((cached) => cached || fetch(req)));
+});
+
+// ===== プッシュ通知 =====
+// サーバーから知らせが届いたとき：画面が消えていても通知を出す
+self.addEventListener('push', (event) => {
+  let title = 'ポモドーロ';
+  let body = '時間になりました';
+  let url = './';
+  try {
+    const data = event.data ? event.data.json() : {};
+    const n = data.notification || data;   // 新しい形（notification の中）と、シンプルな形の両方に対応
+    if (n.title) title = String(n.title);
+    if (n.body) body = String(n.body);
+    if (n.navigate || n.url) url = String(n.navigate || n.url);
+  } catch (e) {
+    // 中身が読めなくても、通知だけは出す
+  }
+  event.waitUntil(
+    self.registration.showNotification(title, {
+      body: body,
+      tag: 'pomodoro',
+      renotify: true,
+      icon: 'icons/icon-192.png',
+      badge: 'icons/icon-192.png',
+      data: { url: url }
+    })
+  );
+});
+
+// 通知をタップしたとき：アプリが開いていればそれを前に出し、なければ開く
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const url = (event.notification.data && event.notification.data.url) || './';
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((list) => {
+      const scope = self.registration.scope;
+      const mine = list.find((c) => c.url.startsWith(scope));
+      if (mine && 'focus' in mine) return mine.focus();
+      return self.clients.openWindow(url);
+    })
+  );
 });
