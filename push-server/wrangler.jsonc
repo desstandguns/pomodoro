@@ -1,0 +1,26 @@
+// Cloudflare に置くための設定ファイル
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "pomodoro-push",
+  "main": "src/index.js",
+  "compatibility_date": "2026-09-01",
+  "workers_dev": true,
+
+  // タイマー係（Durable Object）
+  "durable_objects": {
+    "bindings": [{ "name": "PUSH_TIMER", "class_name": "PushTimer" }]
+  },
+  // 無料プランで使える SQLite 型として作る（この行は消したり書き換えたりしないこと）
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["PushTimer"] }],
+
+  // 秘密ではない設定。VAPID_PUBLIC_KEY と VAPID_PRIVATE_KEY は
+  // ここには書かず、npx wrangler secret put で登録します
+  "vars": {
+    // アプリのサイト（https://ユーザー名.github.io）。最後に / を付けない。カンマ区切りで複数可
+    "ALLOWED_ORIGIN": "https://tkjm22y24-droid.github.io",
+    // 送り主の連絡先。https の URL か mailto:メールアドレス
+    "VAPID_SUBJECT": "https://tkjm22y24-droid.github.io/pomodoro/"
+  },
+
+  "observability": { "enabled": true }
+}
