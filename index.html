@@ -128,6 +128,14 @@
     align-items: center;
     justify-content: center;
   }
+  .clock { flex-direction: column; gap: 10px; }
+  .ends {
+    margin: 0;
+    min-height: 1.5em;
+    font-size: 1.0625rem;
+    color: var(--sub);
+    font-variant-numeric: tabular-nums;
+  }
   .time {
     font-size: min(30vw, 9.5rem);
     font-weight: 500;
@@ -317,6 +325,7 @@
 
     <div class="clock">
       <div class="time" id="time" role="timer" aria-label="残り時間">25:00</div>
+      <p class="ends" id="endsAt"></p>
     </div>
 
     <div class="controls">
@@ -356,6 +365,7 @@
   const HISTORY_KEY = 'pomodoro-history';   // 日ごとの完了回数 {"2026-11-02": 3}
   const MINUTES_KEY = 'pomodoro-minutes';   // 日ごとの作業した分数 {"2026-11-02": 75}
   const KEEP_DAYS = 30;                     // 記録を残す日数
+  const STATE_KEY = 'pomodoro-state';       // 動いているタイマーの状態（閉じても続きから）
 
   // 前に選んだ作業時間を思い出す（なければ25分）
   let workMin = 25;
@@ -374,6 +384,7 @@
   let timerId = null;
   let count = 0;
   let done = 0;              // リセットしてから終わった作業の回数（4回ごとに長い休憩）
+  let cycleFinished = false; // 長い休憩が終わって止まったところかどうか
 
   const $ = (id) => document.getElementById(id);
 
@@ -392,6 +403,34 @@
     const m = Math.floor(total / 60);
     const s = total % 60;
     return String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
+  }
+
+  // ===== タイマーの状態を保存（アプリが閉じられても、開き直したら続きから） =====
+  function saveState() {
+    try {
+      localStorage.setItem(STATE_KEY, JSON.stringify({
+        workMin: workMin, phase: phase, done: done,
+        endTime: endTime, remaining: endTime ? null : remaining
+      }));
+    } catch (e) {}
+  }
+  function restoreState() {
+    let s = null;
+    try { s = JSON.parse(localStorage.getItem(STATE_KEY) || 'null'); } catch (e) {}
+    // 作業時間が変わっていたり、中身がおかしかったりしたら最初から
+    if (!s || s.workMin !== workMin || (s.phase !== 'work' && s.phase !== 'break')) return;
+    phase = s.phase;
+    done = Math.max(0, Math.floor(Number(s.done) || 0));
+    if (typeof s.endTime === 'number' && s.endTime > 0) {
+      // 動いていた：そのまま続ける（時間を過ぎていたら tick() が正しく進める）
+      endTime = s.endTime;
+      timerId = setInterval(tick, 250);
+      keepScreenOn();
+    } else if (typeof s.remaining === 'number' && s.remaining > 0 && s.remaining <= duration(phase)) {
+      remaining = s.remaining;
+    } else {
+      remaining = duration(phase);
+    }
   }
 
   // ===== 今日の回数（スマホに保存） =====
@@ -514,18 +553,23 @@
     } catch (e) {}
   }
   // workEnded が true なら作業終わりの音（上がる3音）、false なら休憩終わりの音（下がる3音）
-  function chime(workEnded) {
+  // times の回数だけくり返す（時間になったときは気付きやすいよう2回）
+  function chime(workEnded, times) {
     if (!audioCtx) return;
     try {
       if (audioCtx.state === 'suspended') audioCtx.resume();
-      const notes = workEnded ? [659.25, 783.99, 1046.5] : [1046.5, 783.99, 659.25];
+      const phrase = workEnded ? [659.25, 783.99, 1046.5] : [1046.5, 783.99, 659.25];
+      let notes = [];
+      for (let r = 0; r < (times || 1); r++) notes = notes.concat(phrase);
       const t0 = audioCtx.currentTime + 0.05;
-      notes.forEach((freq, i) => {
+      notes.forEach((freq, j) => {
+        const i = j % 3;
+        const round = Math.floor(j / 3);
         const osc = audioCtx.createOscillator();
         const gain = audioCtx.createGain();
         osc.type = 'sine';
         osc.frequency.value = freq;
-        const t = t0 + i * 0.35;
+        const t = t0 + round * 2.2 + i * 0.35;
         gain.gain.setValueAtTime(0.0001, t);
         gain.gain.exponentialRampToValueAtTime(0.3, t + 0.02);
         gain.gain.exponentialRampToValueAtTime(0.0001, t + 1.4);
@@ -667,6 +711,7 @@
       if (phase === 'work') status = long ? '終わったら' + longBreakMin + '分の長い休憩です' : '終わったら' + breakMin + '分休憩です';
       else status = '終わったら次の作業が始まります';
     } else if (!untouched) status = '一時停止中';
+    else if (cycleFinished) status = 'おつかれさまでした。スタートで次の作業へ';
     else if (phase === 'work') status = 'スタートを押すと' + workMin + '分の作業が始まります';
     else status = long ? 'スタートを押すと' + longBreakMin + '分の長い休憩が始まります' : 'スタートを押すと' + breakMin + '分の休憩が始まります';
     $('status').textContent = status;
@@ -676,6 +721,14 @@
       b.setAttribute('aria-pressed', Number(b.dataset.min) === workMin ? 'true' : 'false');
       b.disabled = running;
     });
+
+    // 終わる時刻（例：14:25 に終わります）
+    let ends = '';
+    if (running) {
+      const d = new Date(endTime);
+      ends = d.getHours() + ':' + String(d.getMinutes()).padStart(2, '0') + ' に終わります';
+    }
+    $('endsAt').textContent = ends;
 
     render();
     updateBarColor();
@@ -697,32 +750,46 @@
     let switched = false;
     // 時間を過ぎていたら次のモードへ（ほかのアプリから戻ったときも正しく進む）
     // 回数を先に数えるので、4回目のあとは長い休憩の長さで進む
-    while (Date.now() >= endTime) {
+    // 長い休憩が終わったら、そこで止まって待つ（つけっぱなしで回数が増え続けないように）
+    while (endTime && Date.now() >= endTime) {
+      switched = true;
       if (phase === 'work') {
         addCount();
         done++;
+        phase = 'break';
+        endTime += duration(phase);
+      } else if (isLongBreak()) {
+        phase = 'work';
+        endTime = null;
+        remaining = WORK;
+        cycleFinished = true;
+        clearInterval(timerId);
+        allowScreenOff();
+      } else {
+        phase = 'work';
+        endTime += duration(phase);
       }
-      phase = phase === 'work' ? 'break' : 'work';
-      endTime += duration(phase);
-      switched = true;
     }
     if (switched) {
-      chime(phase === 'break');
+      chime(phase === 'break', 2);
       vibrate();
       update();
       schedulePush();
+      saveState();
     } else {
       render();
     }
   }
   function start() {
     prepareAudio();
+    cycleFinished = false;
     endTime = Date.now() + remaining;
     clearInterval(timerId);
     timerId = setInterval(tick, 250);
     keepScreenOn();
     update();
     schedulePush();
+    saveState();
   }
   function pause() {
     remaining = timeLeft();
@@ -731,6 +798,7 @@
     allowScreenOff();
     cancelPush();
     update();
+    saveState();
   }
   function reset() {
     clearInterval(timerId);
@@ -739,8 +807,10 @@
     cancelPush();
     phase = 'work';
     done = 0;
+    cycleFinished = false;
     remaining = WORK;
     update();
+    saveState();
   }
 
   $('startBtn').addEventListener('click', () => (endTime ? pause() : start()));
@@ -801,7 +871,9 @@
   count = loadCount();
   renderCount();
   renderHistory();
+  restoreState();
   update();
+  tick();
   // ページの準備ができてから通知ボタンを整える（push.js がなければ隠したまま）
   document.addEventListener('DOMContentLoaded', refreshNotify);
 

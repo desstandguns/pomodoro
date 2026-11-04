@@ -190,21 +190,23 @@ test('日付をまたいで戻ってきたら、表示も0回になる', async (
   }
 });
 
-test('お知らせの音: 作業が終わると上がる3音、休憩が終わると下がる3音', async () => {
+test('お知らせの音: 作業が終わると上がる3音、休憩が終わると下がる3音（気付きやすいよう2回くり返す）', async () => {
   const { context, page, errors } = await openApp(env, { time: T0, initScripts: [recordNotesScript] });
   try {
     await page.click('#startBtn');
     await page.evaluate(() => { window.__notes = []; }); // 準備の音（無音）は数えない
 
     await advance(page, 25 * MIN);
-    const up = await waitFor(page, () => window.__notes.length >= 3 && window.__notes.slice());
-    assert.equal(up.length, 3, `3音のはず: ${up}`);
+    const up = await waitFor(page, () => window.__notes.length >= 6 && window.__notes.slice());
+    assert.equal(up.length, 6, `3音×2回のはず: ${up}`);
+    assert.deepEqual(up.slice(3), up.slice(0, 3), `同じ3音をくり返すはず: ${up}`);
     assert.ok(up[0] < up[1] && up[1] < up[2], `上がる音のはず: ${up}`);
 
     await page.evaluate(() => { window.__notes = []; });
     await advance(page, 5 * MIN);
-    const down = await waitFor(page, () => window.__notes.length >= 3 && window.__notes.slice());
-    assert.equal(down.length, 3, `3音のはず: ${down}`);
+    const down = await waitFor(page, () => window.__notes.length >= 6 && window.__notes.slice());
+    assert.equal(down.length, 6, `3音×2回のはず: ${down}`);
+    assert.deepEqual(down.slice(3), down.slice(0, 3), `同じ3音をくり返すはず: ${down}`);
     assert.ok(down[0] > down[1] && down[1] > down[2], `下がる音のはず: ${down}`);
     assert.deepEqual(errors, []);
   } finally {
@@ -261,6 +263,82 @@ test('サービスワーカー: アプリのファイルを保存し、ネット
     await page.reload();
     assert.equal(await text(page, '#time'), '25:00');
     assert.equal(await text(page, '#startBtn'), 'スタート');
+    assert.deepEqual(errors, []);
+  } finally {
+    await context.close();
+  }
+});
+
+test('動いている途中でアプリが閉じられても、開き直すと続きから動く', async () => {
+  const { context, page, errors } = await openApp(env, { time: T0 });
+  try {
+    await page.click('#startBtn');
+    await advance(page, 10 * MIN);
+    // ページを開き直す（スマホがアプリを閉じたのと同じ）。そのあいだに3分たつ
+    await page.clock.fastForward(3 * MIN);
+    await page.reload();
+    await page.clock.runFor(500);
+    assert.equal(await text(page, '#mode'), '作業');
+    assert.equal(await text(page, '#startBtn'), '一時停止');
+    const left = toSeconds(await text(page, '#time'));
+    assert.ok(left <= 12 * 60 && left >= 12 * 60 - 2, `残り12:00前後のはず: ${left}秒`);
+
+    // 閉じているあいだに作業が終わっていたら、回数も数えて休憩に進んでいる
+    await page.clock.fastForward(14 * MIN);
+    await page.reload();
+    await page.clock.runFor(500);
+    assert.equal(await text(page, '#mode'), '休憩');
+    assert.equal(await text(page, '#count'), '1回');
+    assert.deepEqual(errors, []);
+  } finally {
+    await context.close();
+  }
+});
+
+test('一時停止したまま閉じても、開き直すと残り時間を覚えている', async () => {
+  const { context, page, errors } = await openApp(env, { time: T0 });
+  try {
+    await page.click('#startBtn');
+    await advance(page, 5 * MIN);
+    await page.click('#startBtn');
+    await page.clock.fastForward(60 * MIN);
+    await page.reload();
+    assert.equal(await text(page, '#startBtn'), '再開');
+    assert.equal(await text(page, '#time'), '20:00');
+    assert.deepEqual(errors, []);
+  } finally {
+    await context.close();
+  }
+});
+
+test('長い休憩が終わったら止まって待つ（つけっぱなしでも回数が増え続けない）', async () => {
+  const { context, page, errors } = await openApp(env, { time: T0 });
+  try {
+    await page.click('#startBtn');
+    await page.clock.fastForward(10 * 60 * MIN);   // 10時間放っておく
+    await page.clock.runFor(500);
+    assert.equal(await text(page, '#count'), '4回');
+    assert.equal(await text(page, '#mode'), '作業');
+    assert.equal(await text(page, '#time'), '25:00');
+    assert.equal(await text(page, '#startBtn'), 'スタート');
+    assert.equal(await text(page, '#status'), 'おつかれさまでした。スタートで次の作業へ');
+    assert.equal(await text(page, '#endsAt'), '');
+    assert.deepEqual(errors, []);
+  } finally {
+    await context.close();
+  }
+});
+
+test('動いているあいだは、終わる時刻を表示する', async () => {
+  const { context, page, errors } = await openApp(env, { time: T0 });
+  try {
+    assert.equal(await text(page, '#endsAt'), '');
+    await page.click('#startBtn');
+    assert.equal(await text(page, '#endsAt'), '10:25 に終わります');
+    await advance(page, 25 * MIN);
+    assert.equal(await text(page, '#endsAt'), '10:30 に終わります');
+    await page.click('#startBtn');
+    assert.equal(await text(page, '#endsAt'), '');
     assert.deepEqual(errors, []);
   } finally {
     await context.close();
