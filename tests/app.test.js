@@ -190,22 +190,26 @@ test('日付をまたいで戻ってきたら、表示も0回になる', async (
   }
 });
 
-test('お知らせの音: 作業が終わると上がる3音、休憩が終わると下がる3音（気付きやすいよう2回くり返す）', async () => {
+test('お知らせの音: 作業が終わると上がる3音、休憩が終わると下がる3音（くり返し鳴る）', async () => {
   const { context, page, errors } = await openApp(env, { time: T0, initScripts: [recordNotesScript] });
   try {
     await page.click('#startBtn');
     await page.evaluate(() => { window.__notes = []; }); // 準備の音（無音）は数えない
 
     await advance(page, 25 * MIN);
+    await page.clock.runFor(2600);   // 2回目が鳴るまで進める
     const up = await waitFor(page, () => window.__notes.length >= 6 && window.__notes.slice());
-    assert.equal(up.length, 6, `3音×2回のはず: ${up}`);
+    await page.mouse.click(5, 5);    // さわって止める
+    assert.equal(up.length, 6, `3音を2回のはず: ${up}`);
     assert.deepEqual(up.slice(3), up.slice(0, 3), `同じ3音をくり返すはず: ${up}`);
     assert.ok(up[0] < up[1] && up[1] < up[2], `上がる音のはず: ${up}`);
 
     await page.evaluate(() => { window.__notes = []; });
     await advance(page, 5 * MIN);
+    await page.clock.runFor(2600);   // 2回目が鳴るまで進める
     const down = await waitFor(page, () => window.__notes.length >= 6 && window.__notes.slice());
-    assert.equal(down.length, 6, `3音×2回のはず: ${down}`);
+    await page.mouse.click(5, 5);    // さわって止める
+    assert.equal(down.length, 6, `3音を2回のはず: ${down}`);
     assert.deepEqual(down.slice(3), down.slice(0, 3), `同じ3音をくり返すはず: ${down}`);
     assert.ok(down[0] > down[1] && down[1] > down[2], `下がる音のはず: ${down}`);
     assert.deepEqual(errors, []);
@@ -339,6 +343,45 @@ test('動いているあいだは、終わる時刻を表示する', async () =>
     assert.equal(await text(page, '#endsAt'), '10:30 に終わります');
     await page.click('#startBtn');
     assert.equal(await text(page, '#endsAt'), '');
+    assert.deepEqual(errors, []);
+  } finally {
+    await context.close();
+  }
+});
+
+test('時間になったら、画面にさわるまで音をくり返す（最大1分）', async () => {
+  const { context, page, errors } = await openApp(env, { time: T0, initScripts: [recordNotesScript] });
+  try {
+    const notes = () => page.evaluate(() => window.__notes.length);
+    await page.click('#startBtn');
+    await page.evaluate(() => { window.__notes = []; });
+    assert.equal(await page.isVisible('#stopAlarmBtn'), false);
+
+    await advance(page, 25 * MIN);
+    assert.equal(await page.isVisible('#stopAlarmBtn'), true);
+    assert.equal(await page.isVisible('#testSoundBtn'), false);
+    await page.clock.runFor(10 * 1000);
+    const ringing = await notes();
+    assert.ok(ringing >= 12, `10秒のあいだに何回も鳴るはず: ${ringing}音`);
+
+    // 「音を止める」を押すと止まり、そのあとは鳴らない
+    await page.click('#stopAlarmBtn');
+    const stopped = await notes();
+    await page.clock.runFor(10 * 1000);
+    assert.equal(await notes(), stopped);
+    assert.equal(await page.isVisible('#stopAlarmBtn'), false);
+    assert.equal(await page.isVisible('#testSoundBtn'), true);
+    // タイマーはそのまま動いている
+    assert.equal(await text(page, '#mode'), '休憩');
+    assert.equal(await text(page, '#startBtn'), '一時停止');
+
+    // さわらなければ、1分で自動的に止まる
+    await advance(page, 5 * MIN);
+    await page.clock.runFor(70 * 1000);
+    const after = await notes();
+    await page.clock.runFor(10 * 1000);
+    assert.equal(await notes(), after, '1分たったら止まるはず');
+    assert.equal(await page.isVisible('#stopAlarmBtn'), false);
     assert.deepEqual(errors, []);
   } finally {
     await context.close();

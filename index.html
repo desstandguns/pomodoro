@@ -231,6 +231,12 @@
     color: var(--sub);
     box-shadow: inset 0 0 0 1.5px var(--line);
   }
+  .small.ringing {
+    color: var(--on-accent);
+    background: var(--accent);
+    box-shadow: none;
+    font-weight: 700;
+  }
   .small[aria-pressed="true"] {
     color: var(--accent);
     box-shadow: inset 0 0 0 1.5px var(--accent);
@@ -344,6 +350,7 @@
 
     <div class="extras">
       <button class="small" id="testSoundBtn" type="button">音を試す</button>
+      <button class="small ringing" id="stopAlarmBtn" type="button" hidden>音を止める</button>
       <button class="small" id="notifyBtn" type="button" aria-pressed="false" hidden>通知：オフ</button>
     </div>
 
@@ -368,6 +375,8 @@
   const HISTORY_KEY = 'pomodoro-history';   // 日ごとの完了回数 {"2026-11-02": 3}
   const MINUTES_KEY = 'pomodoro-minutes';   // 日ごとの作業した分数 {"2026-11-02": 75}
   const KEEP_DAYS = 30;                     // 記録を残す日数
+  const ALARM_SECONDS = 60;                 // 時間になったら、気付くまで音をくり返す長さ（最大）
+  const ALARM_GAP = 2500;                   // くり返す間かく（ミリ秒）
   const STATE_KEY = 'pomodoro-state';       // 動いているタイマーの状態（閉じても続きから）
 
   // 前に選んだ作業時間を思い出す（なければ25分）
@@ -556,7 +565,7 @@
     } catch (e) {}
   }
   // workEnded が true なら作業終わりの音（上がる3音）、false なら休憩終わりの音（下がる3音）
-  // times の回数だけくり返す（時間になったときは気付きやすいよう2回）
+  // times の回数だけ続けて鳴らす（ふつうは1回。くり返しは startAlarm が受け持つ）
   function chime(workEnded, times) {
     if (!audioCtx) return;
     try {
@@ -588,6 +597,32 @@
     try {
       if (navigator.vibrate) navigator.vibrate([300, 150, 300, 150, 300]);
     } catch (e) {}
+  }
+
+  // ===== 時間になったときの知らせ（画面にさわるまでくり返す） =====
+  let alarmId = null;
+  function startAlarm(workEnded) {
+    stopAlarm();
+    const until = Date.now() + ALARM_SECONDS * 1000;
+    const ring = () => {
+      chime(workEnded);
+      vibrate();
+    };
+    ring();
+    alarmId = setInterval(() => {
+      if (Date.now() >= until) stopAlarm();
+      else ring();
+    }, ALARM_GAP);
+    $('testSoundBtn').hidden = true;
+    $('stopAlarmBtn').hidden = false;
+  }
+  function stopAlarm() {
+    if (alarmId === null) return;
+    clearInterval(alarmId);
+    alarmId = null;
+    try { if (navigator.vibrate) navigator.vibrate(0); } catch (e) {}
+    $('stopAlarmBtn').hidden = true;
+    $('testSoundBtn').hidden = false;
   }
 
   // ===== 通知（push.js があるときだけ使う） =====
@@ -774,8 +809,7 @@
       }
     }
     if (switched) {
-      chime(phase === 'break', 2);
-      vibrate();
+      startAlarm(phase === 'break');
       update();
       schedulePush();
       saveState();
@@ -800,6 +834,7 @@
     clearInterval(timerId);
     allowScreenOff();
     cancelPush();
+    stopAlarm();
     update();
     saveState();
   }
@@ -808,6 +843,7 @@
     endTime = null;
     allowScreenOff();
     cancelPush();
+    stopAlarm();
     phase = 'work';
     done = 0;
     cycleFinished = false;
@@ -820,6 +856,11 @@
   $('resetBtn').addEventListener('click', reset);
 
   // 音を試す：タイマーはそのままで、作業終わりの音とバイブだけ鳴らす
+  // 画面のどこかにさわったら、くり返しの音を止める
+  document.addEventListener('pointerdown', stopAlarm, true);
+  document.addEventListener('keydown', stopAlarm, true);
+  $('stopAlarmBtn').addEventListener('click', stopAlarm);
+
   $('testSoundBtn').addEventListener('click', () => {
     prepareAudio();
     chime(true);
