@@ -51,7 +51,7 @@ test('長い休憩: 25分なら 休憩は 5,5,5,15分。#cycle は 1/4〜4/4', a
   }
 });
 
-for (const [work, rest, long] of [[45, 10, 20], [60, 15, 30]]) {
+for (const [work, rest, long] of [[3, 1, 3], [5, 1, 3], [45, 10, 20], [60, 15, 30]]) {
   test(`長い休憩: ${work}分なら4回目のあとは${long}分`, async (t) => {
     const { context, page, errors } = await openApp(env, { time: T0 });
     try {

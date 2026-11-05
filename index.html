@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>ポモドーロタイマー</title>
-<meta name="description" content="25分・45分・60分の作業と休憩をくり返す、シンプルなタイマー">
+<meta name="description" content="3分・5分・25分・45分・60分の作業と休憩をくり返す、シンプルなタイマー">
 <meta name="theme-color" content="#E7EBEF">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icons/favicon-32.png" sizes="32x32" type="image/png">
@@ -197,10 +197,11 @@
   .lengths {
     margin: 20px 0 0;
     display: flex;
-    gap: 8px;
+    gap: 6px;
   }
   .lengths button {
     flex: 1;
+    min-width: 0;
     height: 44px;
     font-size: 1rem;
     background: transparent;
@@ -317,6 +318,8 @@
       </div>
       <p class="status" id="status">スタートを押すと25分の作業が始まります</p>
       <div class="lengths" id="lengths" role="group" aria-label="作業時間">
+        <button type="button" data-min="3" aria-pressed="false">3分</button>
+        <button type="button" data-min="5" aria-pressed="false">5分</button>
         <button type="button" data-min="25" aria-pressed="true">25分</button>
         <button type="button" data-min="45" aria-pressed="false">45分</button>
         <button type="button" data-min="60" aria-pressed="false">60分</button>
@@ -356,9 +359,9 @@
 <script>
   // ===== 設定 =====
   // 作業時間（分）と、そのあとの休憩時間（分）の組み合わせ
-  const LENGTHS = { 25: 5, 45: 10, 60: 15 };
+  const LENGTHS = { 3: 1, 5: 1, 25: 5, 45: 10, 60: 15 };
   // 4回目の作業のあとの「長い休憩」（分）
-  const LONG_BREAKS = { 25: 15, 45: 20, 60: 30 };
+  const LONG_BREAKS = { 3: 3, 5: 3, 25: 15, 45: 20, 60: 30 };
   const CYCLE = 4;   // 何回ごとに長い休憩にするか
   const STORAGE_KEY = 'pomodoro-today';
   const LENGTH_KEY = 'pomodoro-length';

@@ -78,11 +78,11 @@ test('作業時間の切り替え: 45分を選ぶと45:00、再読み込みし�
     // 動いている間は押せない
     await page.click('#startBtn');
     const disabled = await page.$$eval('#lengths button', (bs) => bs.map((b) => b.disabled));
-    assert.deepEqual(disabled, [true, true, true]);
+    assert.deepEqual(disabled, [true, true, true, true, true]);
 
     await page.click('#startBtn'); // 一時停止すると押せる
     const enabled = await page.$$eval('#lengths button', (bs) => bs.map((b) => b.disabled));
-    assert.deepEqual(enabled, [false, false, false]);
+    assert.deepEqual(enabled, [false, false, false, false, false]);
     assert.deepEqual(errors, []);
   } finally {
     await context.close();
