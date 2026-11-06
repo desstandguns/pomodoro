@@ -401,3 +401,43 @@ test('アドレスの ?min=45&start=1 で、45分をすぐ始める（アイコ�
     await context.close();
   }
 });
+
+test('目標12回でも、小さいスマホで点が切れずに1列に収まる', async () => {
+  const { context, page, errors } = await openApp(env, { time: T0 });
+  try {
+    await page.setViewportSize({ width: 360, height: 640 });
+    await page.evaluate(() => {
+      localStorage.setItem('pomodoro-settings', JSON.stringify({ goal: 12 }));
+      localStorage.setItem('pomodoro-today', JSON.stringify({ date: '2026-11-06', count: 12 }));
+    });
+    await page.reload();
+    assert.equal(await text(page, '#count'), '12/12回');
+    const [sw, cw] = await page.$eval('#dots', (d) => [d.scrollWidth, d.clientWidth]);
+    assert.ok(sw <= cw, `点がはみ出している: ${sw} > ${cw}`);
+    assert.deepEqual(errors, []);
+  } finally {
+    await context.close();
+  }
+});
+
+test('環境音：知らせの音が鳴っているあいだは流さず、止めたら流れる', async () => {
+  const { context, page, errors } = await openApp(env, { time: T0, initScripts: [recordAmbientScript] });
+  try {
+    const amb = () => page.evaluate(() => window.__amb);
+    await page.evaluate(() => localStorage.setItem('pomodoro-settings', JSON.stringify({ ambient: 'wind' })));
+    await page.reload();
+    await page.click('#startBtn');
+    await advance(page, 25 * MIN);
+    await page.click('#stopAlarmBtn');
+    assert.deepEqual(await amb(), { started: 1, stopped: 1 });
+    await advance(page, 5 * MIN);       // 休憩が終わって作業へ。音が鳴っている
+    assert.equal(await text(page, '#mode'), '作業');
+    assert.equal(await page.isVisible('#stopAlarmBtn'), true);
+    assert.deepEqual(await amb(), { started: 1, stopped: 1 });
+    await page.click('#stopAlarmBtn');  // 止めたら環境音が始まる
+    assert.deepEqual(await amb(), { started: 2, stopped: 1 });
+    assert.deepEqual(errors, []);
+  } finally {
+    await context.close();
+  }
+});

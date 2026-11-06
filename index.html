@@ -125,10 +125,11 @@
   .clock {
     flex: 1 0 auto;   /* 記録を開いても時計は小さくならない（下にスクロールする） */
     display: flex;
+    flex-direction: column;
     align-items: center;
     justify-content: center;
+    gap: 10px;
   }
-  .clock { flex-direction: column; gap: 10px; }
   .ends {
     margin: 0;
     min-height: 1.5em;
@@ -351,6 +352,8 @@
   .secondary:disabled:active { transform: none; }
 
   /* 目標があるときの点（まだの分は輪だけ） */
+  .dots.many { gap: 4px; }
+  .dots.many span { width: 8px; height: 8px; }
   .dots span.off {
     background: transparent;
     box-shadow: inset 0 0 0 1.5px var(--line);
@@ -475,6 +478,10 @@
   }
   .seg input:focus-visible + span { outline: 3px solid var(--accent); outline-offset: 2px; }
   .btn-row { display: flex; gap: 8px; margin-top: 10px; }
+  .help summary { cursor: pointer; color: var(--accent); }
+  .help ul { margin: 8px 0 0; padding-left: 1.2em; font-size: .875rem; line-height: 1.65; color: var(--sub); }
+  .help li + li { margin-top: 4px; }
+  .help strong { color: var(--ink); }
   .btn-row .small { flex: 1; }
 
   /* ===== 小さい画面（高さが低いスマホ）用に少し詰める ===== */
@@ -622,6 +629,18 @@
         <input type="file" id="importFile" accept="application/json,.json" hidden>
         <p class="hint" id="backupMsg" role="status"></p>
       </fieldset>
+
+      <details class="help">
+        <summary>使い方とヒント</summary>
+        <ul>
+          <li>知らせの音は、<strong>このアプリの画面を開いているとき</strong>に鳴ります。画面を消したり、ほかのアプリを使っていたりすると鳴りません（戻ったときに続きから動きます）。</li>
+          <li>スマホが<strong>マナーモード</strong>だと、音が聞こえないことがあります。「音を試す」で確かめられます。</li>
+          <li>iPhone はバイブが使えません。Android は音と一緒に震えます。</li>
+          <li>「早めに完了」は、やった分だけ記録して休憩に進みます。休憩中は「休憩をとばす」になります。</li>
+          <li>4回ごとに長い休憩があり、そのあとは止まって待ちます。</li>
+          <li>記録はこのスマホの中にだけ保存されます。機種を変えるときは「書き出す」で保存しておけます。</li>
+        </ul>
+      </details>
 
       <section id="installHint" hidden>
         <p class="hint"><strong>ホーム画面に追加すると、アプリのように使えます。</strong><br>
@@ -784,8 +803,6 @@
     minutes[key] += min;
     saveMap(MINUTES_KEY, minutes);
     addLog(at, min);
-    renderCount();
-    renderHistory();
   }
   function renderCount() {
     const goal = settings.goal;
@@ -794,6 +811,7 @@
     dots.innerHTML = '';
     // 目標があるときは目標の数だけ点を並べ、まだの分は輪だけにする
     const n = goal > 0 ? Math.max(goal, count) : count;
+    dots.classList.toggle('many', n > 8);   // 多いときは点を小さくして1列に収める
     for (let i = 0; i < Math.min(n, 12); i++) {
       const dot = document.createElement('span');
       if (i >= count) dot.className = 'off';
@@ -842,9 +860,8 @@
   }
   // 終わった作業を一覧に足す（いまやることのメモも一緒に）
   function addLog(at, min) {
-    const limit = new Date();
-    limit.setDate(limit.getDate() - KEEP_DAYS);
-    const list = loadLog().filter((x) => x.at >= limit.getTime());
+    const oldest = oldestKey();
+    const list = loadLog().filter((x) => dateKey(new Date(x.at)) >= oldest);
     list.push({ at: at, min: min, task: currentTask() });
     while (list.length > 300) list.shift();
     try { localStorage.setItem(LOG_KEY, JSON.stringify(list)); } catch (e) {}
@@ -920,13 +937,21 @@
         if (!AC) return;
         audioCtx = new AC();
       }
-      if (audioCtx.state === 'suspended') audioCtx.resume();
+      resumeAudio();
       // iPhoneで音を使えるようにするための無音再生
       const buf = audioCtx.createBuffer(1, 1, 22050);
       const src = audioCtx.createBufferSource();
       src.buffer = buf;
       src.connect(audioCtx.destination);
       src.start(0);
+    } catch (e) {}
+  }
+  // 止まっている音を動かす（iPhone でさわる前などは失敗するので、そのときは何もしない）
+  function resumeAudio() {
+    if (!audioCtx || audioCtx.state !== 'suspended') return;
+    try {
+      const p = audioCtx.resume();
+      if (p && p.catch) p.catch(() => {});
     } catch (e) {}
   }
   function output() {
@@ -957,7 +982,7 @@
   function chime(workEnded) {
     if (!audioCtx) return;
     try {
-      if (audioCtx.state === 'suspended') audioCtx.resume();
+      resumeAudio();
       const t0 = audioCtx.currentTime + 0.05;
       if (settings.sound === 'bell') {
         // ベル：2回たたく。高い音を少し重ねて、かねの響きにする
@@ -982,25 +1007,31 @@
 
   // ===== 作業中の環境音（雨・風）。音のファイルは使わず、その場で作る =====
   let ambient = null;
+  const noiseBuffers = {};   // 作った雑音は種類ごとに取っておく
+  function noiseBuffer(kind) {
+    if (noiseBuffers[kind]) return noiseBuffers[kind];
+    const rate = audioCtx.sampleRate;
+    const buf = audioCtx.createBuffer(1, rate * 4, rate);
+    const data = buf.getChannelData(0);
+    let last = 0;
+    for (let i = 0; i < data.length; i++) {
+      const white = Math.random() * 2 - 1;
+      if (kind === 'wind') {
+        // 風：低いざわめき（ブラウンノイズ）
+        last = (last + 0.02 * white) / 1.02;
+        data[i] = last * 3.5;
+      } else {
+        data[i] = white;
+      }
+    }
+    noiseBuffers[kind] = buf;
+    return buf;
+  }
   function startAmbient() {
     if (ambient || !audioCtx || settings.ambient === 'none') return;
     try {
-      const rate = audioCtx.sampleRate;
-      const buf = audioCtx.createBuffer(1, rate * 4, rate);
-      const data = buf.getChannelData(0);
-      let last = 0;
-      for (let i = 0; i < data.length; i++) {
-        const white = Math.random() * 2 - 1;
-        if (settings.ambient === 'wind') {
-          // 風：低いざわめき（ブラウンノイズ）
-          last = (last + 0.02 * white) / 1.02;
-          data[i] = last * 3.5;
-        } else {
-          data[i] = white;
-        }
-      }
       const src = audioCtx.createBufferSource();
-      src.buffer = buf;
+      src.buffer = noiseBuffer(settings.ambient);
       src.loop = true;
       const filter = audioCtx.createBiquadFilter();
       if (settings.ambient === 'wind') {
@@ -1032,9 +1063,9 @@
       a.src.stop(t + 0.6);
     } catch (e) {}
   }
-  // 作業が動いているあいだだけ流す
+  // 作業が動いているあいだだけ流す（知らせの音が鳴っているあいだは待つ）
   function syncAmbient() {
-    if (endTime && phase === 'work' && settings.ambient !== 'none') startAmbient();
+    if (endTime && phase === 'work' && settings.ambient !== 'none' && alarmId === null) startAmbient();
     else stopAmbient();
   }
 
@@ -1063,6 +1094,7 @@
     $('testSoundBtn').hidden = true;
     $('stopAlarmBtn').hidden = false;
     document.documentElement.classList.add('ringing');
+    stopAmbient();
   }
   function stopAlarm() {
     if (alarmId === null) return;
@@ -1072,6 +1104,7 @@
     $('stopAlarmBtn').hidden = true;
     $('testSoundBtn').hidden = false;
     document.documentElement.classList.remove('ringing');
+    syncAmbient();
   }
 
   // ===== 通知（push.js があるときだけ使う） =====
@@ -1274,6 +1307,8 @@
       endTime += duration(phase);
     }
     if (switched) {
+      renderCount();
+      renderHistory();
       // 時間になったばかりのときだけ音を鳴らす（ずっと前に終わっていたら鳴らさない）
       if (Date.now() - lastAt < ALARM_SECONDS * 1000) startAlarm(workEnded);
       update();
@@ -1325,6 +1360,8 @@
       const worked = WORK - timeLeft();
       if (!running && worked <= 0) return;
       addCount(Date.now(), Math.max(1, Math.round(worked / 60000)));
+      renderCount();
+      renderHistory();
       done++;
       phase = 'break';
     } else {
@@ -1499,7 +1536,8 @@
     // スマホでは「共有」から保存できるようにする。できなければふつうにダウンロード
     try {
       const file = new File([blob], name, { type: 'application/json' });
-      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      const touch = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
+      if (touch && navigator.canShare && navigator.canShare({ files: [file] })) {
         await navigator.share({ files: [file], title: name });
         $('backupMsg').textContent = '書き出しました';
         return;
