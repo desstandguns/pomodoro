@@ -32,7 +32,7 @@ test('設定: 開いて変えると覚えていて、開き直しても同じ', 
     await page.check('input[name="goal"][value="6"]');
     await closeSettings(page);
     const saved = await page.evaluate(() => JSON.parse(localStorage.getItem('pomodoro-settings')));
-    assert.deepEqual(saved, { autoNext: false, repeat: true, wake: true, sound: 'bell', volume: 3, goal: 6 });
+    assert.deepEqual(saved, { autoNext: false, repeat: true, wake: true, sound: 'bell', volume: 3, goal: 6, ambient: 'none' });
     await page.reload();
     await openSettings(page);
     assert.equal(await page.isChecked('#optAutoNext'), false);
@@ -327,6 +327,75 @@ test('小さいスマホ（360×640）でも、記録を閉じていればスク
       document.querySelector('main').scrollHeight, document.querySelector('main').clientHeight,
     ]);
     assert.ok(scroll <= inner && mainScroll <= mainClient, `${scroll}/${inner} ${mainScroll}/${mainClient}`);
+    assert.deepEqual(errors, []);
+  } finally {
+    await context.close();
+  }
+});
+
+// 環境音の記録：くり返し流す音（loop）が始まったか・止まったかを window.__amb に残す
+const recordAmbientScript = () => {
+  window.__amb = { started: 0, stopped: 0 };
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if (!AC) return;
+  const orig = AC.prototype.createBufferSource;
+  AC.prototype.createBufferSource = function () {
+    const src = orig.call(this);
+    const s0 = src.start.bind(src);
+    const s1 = src.stop.bind(src);
+    src.start = (...a) => { if (src.loop) window.__amb.started++; return s0(...a); };
+    src.stop = (...a) => { if (src.loop) window.__amb.stopped++; return s1(...a); };
+    return src;
+  };
+};
+
+test('環境音：作業が動いているあいだだけ流れる', async () => {
+  const { context, page, errors } = await openApp(env, { time: T0, initScripts: [recordAmbientScript] });
+  try {
+    const amb = () => page.evaluate(() => window.__amb);
+    await page.click('#startBtn');
+    assert.deepEqual(await amb(), { started: 0, stopped: 0 });   // 「なし」なら流れない
+    await page.click('#startBtn');
+
+    await page.evaluate(() => localStorage.setItem('pomodoro-settings', JSON.stringify({ ambient: 'rain' })));
+    await page.reload();
+    await page.click('#startBtn');
+    assert.deepEqual(await amb(), { started: 1, stopped: 0 });
+    await page.click('#startBtn');   // 一時停止で止まる
+    assert.deepEqual(await amb(), { started: 1, stopped: 1 });
+    await page.click('#startBtn');
+    await advance(page, 25 * MIN);    // 休憩に入ると止まる
+    assert.equal(await text(page, '#mode'), '休憩');
+    assert.deepEqual(await amb(), { started: 2, stopped: 2 });
+    assert.deepEqual(errors, []);
+  } finally {
+    await context.close();
+  }
+});
+
+test('音が鳴っているあいだは、数字が点滅する（html に ringing が付く）', async () => {
+  const { context, page, errors } = await openApp(env, { time: T0 });
+  try {
+    await page.click('#startBtn');
+    await advance(page, 25 * MIN);
+    assert.equal(await page.evaluate(() => document.documentElement.classList.contains('ringing')), true);
+    await page.mouse.click(5, 5);
+    assert.equal(await page.evaluate(() => document.documentElement.classList.contains('ringing')), false);
+    assert.deepEqual(errors, []);
+  } finally {
+    await context.close();
+  }
+});
+
+test('アドレスの ?min=45&start=1 で、45分をすぐ始める（アイコン長押しのメニュー用）', async () => {
+  const { context, page, errors } = await openApp(env, { time: T0 });
+  try {
+    await page.goto(env.url + '?min=45&start=1');
+    assert.equal(await text(page, '#startBtn'), '一時停止');
+    assert.ok(toSeconds(await text(page, '#time')) > 44 * 60);
+    assert.equal(new URL(page.url()).search, '');   // アドレスはきれいに戻す
+    const manifest = await page.evaluate(() => fetch('manifest.webmanifest').then((r) => r.json()));
+    assert.deepEqual(manifest.shortcuts.map((x) => x.url), ['./?min=25&start=1', './?min=45&start=1', './?min=5&start=1']);
     assert.deepEqual(errors, []);
   } finally {
     await context.close();
